@@ -1,0 +1,16 @@
+{
+    "auth": {
+        "username": "user@email.com",
+        "password": ""
+    },
+    "account_id" : "",
+    "phone_number": "8001234567",
+    "low_data_warning_bytes": 52428800,
+    "logging": {
+        "log_level": 30,
+        "gotify": {
+            "app_token": "",
+            "server_url": "https://gotify.example.com"
+        }
+    }
+}
