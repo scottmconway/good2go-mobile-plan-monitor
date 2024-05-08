@@ -9,13 +9,16 @@ from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
+from requests.models import HTTPError
 
 VERIFY_PASSWORD_URL = (
     "https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword"
 )
-GOOD2GO_ROOT_URL = "https://www.good2gomobile.com"
+API_ROOT_URL = "https://g2g-zwp.ztarmobile.io"
+USER_SITE_ROOT_URL = "https://www.good2gomobile.com"
+
 GOOGLE_API_KEY_REGEX = re.compile('apiKey:"([a-zA-Z0-9-]+)"')
-FIREBASE_LOGIN_URL = f"{GOOD2GO_ROOT_URL}/api/user/firebaseLogin"
+FIREBASE_LOGIN_URL = f"{API_ROOT_URL}/api/user/firebaseLogin"
 BYTE_SIZE = {"kb": 1024, "mb": 1048576, "gb": 1073741824}
 BYTE_SUFFIXES = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
 
@@ -62,7 +65,7 @@ def get_google_api_key(
         good2go_session = requests.Session()
 
     # download all JS scripts from good2go and look for their google API key
-    site_res = good2go_session.get(GOOD2GO_ROOT_URL)
+    site_res = good2go_session.get(USER_SITE_ROOT_URL)
     soup = BeautifulSoup(site_res.text, "html.parser")
     js_script_tags = soup.findAll("script")
 
@@ -73,7 +76,7 @@ def get_google_api_key(
 
         else:
             # we've found locally hosted scripts
-            script_url = f"{GOOD2GO_ROOT_URL}/{url}"
+            script_url = f"{USER_SITE_ROOT_URL}/{url}"
             script_res = good2go_session.get(script_url).text
 
             api_key_match = GOOGLE_API_KEY_REGEX.search(script_res)
@@ -90,6 +93,12 @@ def main():
         type=str,
         default="config.json",
         help="The path to a configuration file. If absent, ./config.json is used",
+    )
+    parser.add_argument(
+        "--ignore-408",
+        action="store_true",
+        help="If set, do not alert when an HTTPError w/ response status 408 is raised"
+        "(G2G is noisy with these)",
     )
     args = parser.parse_args()
 
@@ -139,7 +148,7 @@ def main():
         #
         # for now we just hardcode it
         account_info_json = good_session.get(
-            f"{GOOD2GO_ROOT_URL}/api/plan/{config['account_id']}/account/{config['phone_number']}/sync",
+            f"{API_ROOT_URL}/api/plan/{config['account_id']}/account/{config['phone_number']}/sync",
             headers={"Authentication": firebase_token},
         ).json()
 
@@ -158,7 +167,11 @@ def main():
             )
 
     except BaseException as be:
-        logger.error(f"{type(be).__name__} - {' '.join(be.args)}")
+        # don't alert on 408s if the user doesn't care about them
+        if not (
+            type(be) == HTTPError and be.response.status_code == 408 and args.ignore_408
+        ):
+            logger.error(f"{type(be).__name__} - {' '.join(be.args)}")
 
 
 if __name__ == "__main__":
