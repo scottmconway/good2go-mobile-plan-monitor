@@ -1,16 +1,25 @@
 {
     "auth": {
-        "username": "user@email.com",
+        "username": "user@example.com",
         "password": ""
     },
-    "account_id" : "",
-    "phone_number": "8001234567",
+    "account_id" : "-N4Y0mahO9Q-KKErJWEz",
+    "phone_number": "1111111111",
     "low_data_warning_bytes": 52428800,
     "logging": {
-        "log_level": 30,
-        "gotify": {
-            "app_token": "",
-            "server_url": "https://gotify.example.com"
+        "version": 1,
+        "handlers": {
+            "ntfyHandler": {
+                "class": "ntfy_handler.NtfyHandler",
+                "level": "INFO",
+                "topic_name": "good2go-alerts",
+                }
+            },
+        "loggers": {
+            "good2go_plan_montior": {
+                "handlers": ["ntfyHandler"],
+                "level": "INFO"
+            }
         }
     }
 }

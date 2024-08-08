@@ -3,6 +3,7 @@
 import argparse
 import json
 import logging
+import logging.config
 import math
 import re
 from typing import Optional
@@ -106,21 +107,15 @@ def main():
         config = json.load(f)
 
     # logging setup
-    logger = logging.getLogger("Good2Go Plan Monitor")
-    logging.basicConfig()
-
+    logger = logging.getLogger("good2go_plan_monitor")
     logging_conf = config.get("logging", dict())
-    logger.setLevel(logging_conf.get("log_level", logging.INFO))
-    if "gotify" in logging_conf:
-        from gotify_handler import GotifyHandler
-
-        logger.addHandler(GotifyHandler(**logging_conf["gotify"]))
+    logging.config.dictConfig(logging_conf)
 
     try:
         good_session = requests.Session()
-        good_session.hooks[
-            "response"
-        ] = lambda res, *args, **kwargs: res.raise_for_status()
+        good_session.hooks["response"] = (
+            lambda res, *args, **kwargs: res.raise_for_status()
+        )
 
         google_api_key = get_google_api_key(good_session)
         if google_api_key is None:
