@@ -68,7 +68,7 @@ def get_google_api_key(
     # download all JS scripts from good2go and look for their google API key
     site_res = good2go_session.get(USER_SITE_ROOT_URL)
     soup = BeautifulSoup(site_res.text, "html.parser")
-    js_script_tags = soup.findAll("script")
+    js_script_tags = soup.find_all("script")
 
     for js_script_tag in js_script_tags:
         url = js_script_tag.attrs.get("src", "https://")
