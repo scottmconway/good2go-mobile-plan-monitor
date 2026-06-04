@@ -5,21 +5,30 @@ import json
 import logging
 import logging.config
 import math
-import re
-from typing import Optional
 
 import requests
-from bs4 import BeautifulSoup
 from requests.models import HTTPError
 
-VERIFY_PASSWORD_URL = (
-    "https://www.googleapis.com/identitytoolkit/v3/relyingparty/verifyPassword"
-)
-API_ROOT_URL = "https://g2g-zwp.ztarmobile.io"
-USER_SITE_ROOT_URL = "https://www.good2gomobile.com"
+# Public Firebase Web API key for Good2Go's Firebase project ("prod-good2go").
+FIREBASE_API_KEY = "AIzaSyAUwn5YLtuu0b-xL2OgvhYVFE7Sp0p-hlY"
 
-GOOGLE_API_KEY_REGEX = re.compile('apiKey:"([a-zA-Z0-9-]+)"')
-FIREBASE_LOGIN_URL = f"{API_ROOT_URL}/api/user/firebaseLogin"
+# Firebase Identity Toolkit endpoint for email/password sign-in.
+FIREBASE_SIGN_IN_URL = (
+    "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword"
+)
+
+# Good2Go's auth BFF - exchanges a Firebase ID token
+# for a short-lived "server token" (a JWT issued by zwp_bff).
+ZWP_BFF_URL = "https://zwp-bff-5zxbrbyvaq-uc.a.run.app"
+
+# Good2Go's data BFF - exposes the account / plan / buckets endpoints.
+ZMP_BFF_URL = "https://zmp-bff-5zxbrbyvaq-uc.a.run.app"
+
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
+)
+
 BYTE_SIZE = {"kb": 1024, "mb": 1048576, "gb": 1073741824}
 BYTE_SUFFIXES = ["B", "KiB", "MiB", "GiB", "TiB", "PiB"]
 
@@ -49,42 +58,35 @@ def byte_size_to_human_readable(byte_size: int) -> str:
     return f"{byte_size_for_rank} {BYTE_SUFFIXES[rank]}"
 
 
-def get_google_api_key(
-    good2go_session: Optional[requests.Session] = None,
-) -> Optional[str]:
+def firebase_sign_in(session: requests.Session, email: str, password: str) -> str:
     """
-    Attempt to locate and return Good2Go's Google API key from its main site
-
-    :param good2go_session: If provided, a requests session to use
-        for all HTTP requests
-    :type good2go_session: Optional[requests.Session]
-    :return: If located, Good2Go's Google API key
-    :rtype: Optional[str]
+    Sign in to Good2Go's Firebase project with email + password
+    and return the resulting Firebase ID token.
     """
 
-    if good2go_session is None:
-        good2go_session = requests.Session()
+    res = session.post(
+        FIREBASE_SIGN_IN_URL,
+        params={"key": FIREBASE_API_KEY},
+        json={
+            "email": email,
+            "password": password,
+            "returnSecureToken": True,
+            "clientType": "CLIENT_TYPE_WEB",
+        },
+    )
+    return res.json()["idToken"]
 
-    # download all JS scripts from good2go and look for their google API key
-    site_res = good2go_session.get(USER_SITE_ROOT_URL)
-    soup = BeautifulSoup(site_res.text, "html.parser")
-    js_script_tags = soup.find_all("script")
 
-    for js_script_tag in js_script_tags:
-        url = js_script_tag.attrs.get("src", "https://")
-        if url.startswith("https://") or url.startswith("http://"):
-            continue
+def exchange_for_server_token(session: requests.Session, firebase_id_token: str) -> str:
+    """
+    Exchange a Firebase ID token for a Good2Go BFF "server token" -
+    the JWT that the data BFF expects in the `authentication` header.
+    """
 
-        else:
-            # we've found locally hosted scripts
-            script_url = f"{USER_SITE_ROOT_URL}/{url}"
-            script_res = good2go_session.get(script_url).text
-
-            api_key_match = GOOGLE_API_KEY_REGEX.search(script_res)
-            if api_key_match is not None:
-                return api_key_match.groups()[0]
-
-    return None
+    res = session.post(
+        f"{ZWP_BFF_URL}/api/user/firebaseLogin",
+        json={"token": firebase_id_token})
+    return res.json()["token"]
 
 
 def main():
@@ -113,48 +115,35 @@ def main():
 
     try:
         good_session = requests.Session()
+        good_session.headers["User-Agent"] = BROWSER_USER_AGENT
         good_session.hooks["response"] = (
             lambda res, *args, **kwargs: res.raise_for_status()
         )
 
-        google_api_key = get_google_api_key(good_session)
-        if google_api_key is None:
-            raise BaseException("Could not locate Google API key")
-
-        # get "secure token" from google API
-        google_token = good_session.post(
-            VERIFY_PASSWORD_URL,
-            params={"key": google_api_key},
-            json={
-                "email": config["auth"]["username"],
-                "password": config["auth"]["password"],
-                "returnSecureToken": True,
-            },
-        ).json()["idToken"]
-
-        # firebase login
-        #
-        # response is a shorter token to use below w/ an email
-        firebase_token = good_session.post(
-            FIREBASE_LOGIN_URL, json={"token": google_token}
-        ).json()["token"]
-
-        # TODO list user accounts / plans
-        #
-        # for now we just hardcode it
-        account_info_json = good_session.get(
-            f"{API_ROOT_URL}/api/plan/{config['account_id']}/account/{config['phone_number']}/sync",
-            headers={"Authentication": firebase_token},
-        ).json()
-
-        # parse JSON, fire warnings if we need to
-        if account_info_json.get("pastDue", False):
-            logging.warning(f"{config['phone_number']} - plan past due")
-
-        remaining_data = account_info_json["dataRemaining"]
-        remaining_data_bytes = (
-            remaining_data["balance"] * BYTE_SIZE[remaining_data["units"].lower()]
+        firebase_id_token = firebase_sign_in(
+            good_session, config["auth"]["username"], config["auth"]["password"]
         )
+        server_token = exchange_for_server_token(good_session, firebase_id_token)
+
+        phone_number = config["phone_number"]
+        buckets = good_session.get(f"{ZMP_BFF_URL}/v1/account/{phone_number}/buckets", headers={"authentication": server_token}).json()
+
+        # account-status alert
+        account_status = buckets.get("accountStatus")
+        if account_status is not None and account_status != "INSTALLED":
+            logger.warning(
+                f"{phone_number} - unexpected account status: {account_status}"
+            )
+
+        # low data alert
+        remaining_data = buckets["dataRemaining"]
+        units = remaining_data["units"].lower()
+        if units not in BYTE_SIZE:
+            raise ValueError(
+                f"Unsupported data unit from API: {remaining_data['units']!r} "
+                f"(known units: {sorted(BYTE_SIZE)})"
+            )
+        remaining_data_bytes = int(remaining_data["balance"]) * BYTE_SIZE[units]
 
         if remaining_data_bytes < config["low_data_warning_bytes"]:
             logger.warning(
@@ -166,7 +155,7 @@ def main():
         if not (
             type(be) == HTTPError and be.response.status_code == 408 and args.ignore_408
         ):
-            logger.error(f"{type(be).__name__} - {' '.join(be.args)}")
+            logger.error(f"{type(be).__name__} - {' '.join(str(a) for a in be.args)}")
 
 
 if __name__ == "__main__":

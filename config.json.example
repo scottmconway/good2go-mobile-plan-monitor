@@ -3,7 +3,6 @@
         "username": "user@example.com",
         "password": ""
     },
-    "account_id" : "-N4Y0mahO9Q-KKErJWEz",
     "phone_number": "1111111111",
     "low_data_warning_bytes": 52428800,
     "logging": {
@@ -16,7 +15,7 @@
                 }
             },
         "loggers": {
-            "good2go_plan_montior": {
+            "good2go_plan_monitor": {
                 "handlers": ["ntfyHandler"],
                 "level": "INFO"
             }
